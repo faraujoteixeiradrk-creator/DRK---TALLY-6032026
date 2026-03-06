@@ -597,8 +597,8 @@
 
     <div class="upload-zone" id="upload-zone-elec" onclick="document.getElementById('file-elec').click()">
       <span class="upload-icon">📎</span>
-      <p>Pulsa para subir PDF o foto</p>
-      <p style="font-size:0.72rem;margin-top:4px;">JPG, PNG, PDF</p>
+      <p><strong>Arrastra aquí</strong> o pulsa para subir</p>
+      <p style="font-size:0.72rem;margin-top:4px;color:var(--muted);">PDF, JPG, PNG</p>
       <div class="file-name" id="file-elec-name" style="display:none;"></div>
     </div>
     <input type="file" id="file-elec" accept=".pdf,image/*" style="display:none;" onchange="archivoSeleccionado('elec', this)">
@@ -614,8 +614,8 @@
 
     <div class="upload-zone" id="upload-zone-gas" onclick="document.getElementById('file-gas').click()">
       <span class="upload-icon">📎</span>
-      <p>Pulsa para subir PDF o foto</p>
-      <p style="font-size:0.72rem;margin-top:4px;">JPG, PNG, PDF</p>
+      <p><strong>Arrastra aquí</strong> o pulsa para subir</p>
+      <p style="font-size:0.72rem;margin-top:4px;color:var(--muted);">PDF, JPG, PNG</p>
       <div class="file-name" id="file-gas-name" style="display:none;"></div>
     </div>
     <input type="file" id="file-gas" accept=".pdf,image/*" style="display:none;" onchange="archivoSeleccionado('gas', this)">
@@ -940,6 +940,10 @@ function selectTipo(tipo) {
 }
 
 function irASubirFactura() {
+  // Resetear estado de archivos al volver
+  fileElec = null; fileGas = null;
+  datosElec = null; datosGas = null;
+
   // Mostrar cards según tipo
   document.getElementById('card-subir-elec').style.display =
     (tipoSeleccionado === 'electricidad' || tipoSeleccionado === 'dual') ? 'block' : 'none';
@@ -947,6 +951,13 @@ function irASubirFactura() {
     (tipoSeleccionado === 'gas' || tipoSeleccionado === 'dual') ? 'block' : 'none';
   document.getElementById('manual-elec').style.display = 'none';
   document.getElementById('manual-gas').style.display = 'none';
+
+  // Reset upload zones
+  document.getElementById('upload-zone-elec').classList.remove('has-file');
+  document.getElementById('upload-zone-gas').classList.remove('has-file');
+  document.getElementById('file-elec-name').style.display = 'none';
+  document.getElementById('file-gas-name').style.display = 'none';
+
   actualizarBtnAnalizar();
   mostrarScreen('screen-subir');
 }
@@ -1406,10 +1417,58 @@ function enviarSolicitud() {
 }
 
 // ═══════════════════════════════════════════════
+// DRAG & DROP
+// ═══════════════════════════════════════════════
+function initDragDrop() {
+  ['elec', 'gas'].forEach(tipo => {
+    const zone = document.getElementById('upload-zone-' + tipo);
+    if (!zone) return;
+
+    zone.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.style.borderColor = 'var(--accent)';
+      zone.style.background = '#e0faf6';
+    });
+
+    zone.addEventListener('dragleave', e => {
+      e.preventDefault();
+      zone.style.borderColor = 'var(--drk2)';
+      zone.style.background = '#f8faff';
+    });
+
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.style.borderColor = 'var(--drk2)';
+      zone.style.background = '#f8faff';
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+      // Simular selección
+      if (tipo === 'elec') {
+        fileElec = file;
+        zone.classList.add('has-file');
+        document.getElementById('file-elec-name').textContent = '✅ ' + file.name;
+        document.getElementById('file-elec-name').style.display = 'block';
+        datosElec = 'ia';
+      } else {
+        fileGas = file;
+        zone.classList.add('has-file');
+        document.getElementById('file-gas-name').textContent = '✅ ' + file.name;
+        document.getElementById('file-gas-name').style.display = 'block';
+        datosGas = 'ia';
+      }
+      actualizarBtnAnalizar();
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   cargarTarifas();
+  initDragDrop();
 });
 </script>
 </body>
