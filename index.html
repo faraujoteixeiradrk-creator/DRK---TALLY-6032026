@@ -1685,10 +1685,16 @@ function mostrarResultadoGas(tarifas) {
 // CTA ALTA
 // ═══════════════════════════════════════════════
 function quieroAhorro() {
+  // Pre-rellenar nombre si la IA lo extrajo
+  const nombreIA = datosElec?.nombre_cliente || datosGas?.nombre_cliente || '';
+  if (nombreIA) {
+    const el = document.getElementById('alta-nombre');
+    if (el && !el.value) el.value = nombreIA;
+  }
   mostrarScreen('screen-alta');
 }
 
-function enviarSolicitud() {
+async function enviarSolicitud() {
   const nombre = document.getElementById('alta-nombre').value.trim();
   const email  = document.getElementById('alta-email').value.trim();
   const tel    = document.getElementById('alta-tel').value.trim();
@@ -1697,8 +1703,37 @@ function enviarSolicitud() {
   if (!nombre || !email) { showToast('Por favor rellena nombre y email'); return; }
   if (!rgpd) { showToast('Debes aceptar la política de privacidad'); return; }
 
-  // Aquí conectará con Make/Worker en siguiente fase
-  console.log('Solicitud de alta:', { nombre, email, tel, datosElec, datosGas, resultadoElec: resultadoElec?.[0], resultadoGas: resultadoGas?.[0] });
+  // Recoger datos de ahorro para el email
+  const mejorElec = resultadoElec?.[0];
+  const mejorGas  = resultadoGas?.[0];
+
+  const btn = document.querySelector('#screen-alta .btn-cta');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+
+  try {
+    // Enviar email al cliente via Worker
+    const payload = {
+      to: email,
+      nombre,
+      ahorro_elec: mejorElec ? Math.round(mejorElec._ahorroAnual) : null,
+      ahorro_gas:  mejorGas  ? Math.round(mejorGas._ahorroAnual)  : null,
+      tarifa_elec: mejorElec ? `${mejorElec.name} ${mejorElec.description||''}`.trim() : null,
+      tarifa_gas:  mejorGas  ? `${mejorGas.name} ${mejorGas.description||''}`.trim()  : null,
+    };
+
+    const res = await fetch(WORKER_URL + '/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+    console.log('Email enviado:', data);
+  } catch(e) {
+    console.warn('Error enviando email:', e.message);
+    // No bloquear — mostrar gracias igualmente
+  }
+
   mostrarScreen('screen-gracias');
 }
 
