@@ -1096,22 +1096,100 @@ async function extraerDatosIA(file, tipo) {
 
 function promptIA(tipo) {
   if (tipo === 'electricidad') {
-    return `Analiza esta factura de electricidad española y devuelve SOLO este JSON sin texto adicional:
-{"cups":"ES...","dias":30,"total":85.50,"p1_kw":3.45,"p2_kw":3.45,"e1":150,"e2":200,"e3":300,"tarifa":"2.0TD","nombre_cliente":"","notas":""}
-- cups: código CUPS que empieza por ES
-- dias: días del período de facturación
-- total: importe total a pagar con IVA
-- p1_kw y p2_kw: potencias contratadas en kW
-- e1 (punta), e2 (llano), e3 (valle): kWh consumidos en cada período
-- tarifa: normalmente 2.0TD para hogar`;
+    return `Eres un experto en facturas de electricidad españolas. Analiza esta factura con maxima precision.
+
+=== CAMPO 1: CUPS ===
+- Codigo de 18-22 caracteres que SIEMPRE empieza por "ES" seguido de numeros y letras.
+- Busca UNICAMENTE donde aparezca la etiqueta explicita "CUPS:" en la seccion de datos del suministro o del contrato.
+- REGLA ABSOLUTA: Copia el CUPS EXACTAMENTE caracter por caracter tal como esta impreso en la factura. NO lo reescribas, NO lo deduzcas, NO lo completes de memoria ni lo combines con otros codigos.
+- Si no puedes leerlo con total claridad, escribe "DESCONOCIDO" y explica en "notas".
+- Formato tipico real: ES0021000005154984LZ / ES0031804939F001UW
+- IGNORAR completamente (aunque empiecen por ES o sean largos):
+  * Numero de contador (solo digitos, ej: "4000040502")
+  * Numero de contrato (6-8 digitos, ej: "1078930", "0020987")
+  * CIF/NIF empresa (letra + 8 digitos, ej: B83939702)
+  * Codigos en pie de pagina, referencias QR o distribuidor
+
+=== CAMPO 2: TARIFA ===
+- Busca "Peaje de acceso", "ATR", "Tarifa de acceso" o "Tarifa (Peaje)".
+- "2.0TD" = domestico/pequeño negocio, menos de 15kW, 2 periodos de potencia.
+- "3.0TD" = empresa, 6 periodos de potencia y energia.
+
+=== CAMPO 3: DIAS ===
+- Del periodo de facturacion. Busca "Total dias facturados" o calcula diferencia entre fecha inicio y fin.
+
+=== CAMPO 4: POTENCIAS CONTRATADAS (kW) ===
+- EXTRAE las potencias CONTRATADAS, NO las maximas demandadas.
+- REGLA CRITICA: Conserva SIEMPRE los decimales exactos. Si la factura dice "13,856 kW" debes devolver 13.856, NO 13 ni 14. La coma española es decimal: "13,856" = 13.856 en JSON.
+- Potencias CONTRATADAS aparecen en:
+  * "Termino potencia [fecha] - P1: X kW - Precio: Y" → USA este X con todos sus decimales
+  * "Potencia contratada (kW): P1: X / P2: X"
+  * "Datos del contrato / suministro: Potencia P1: X kW"
+  * En la tabla de detalle de factura: "P1  13,856 kW x 35 Días x 0,08131900 €/kW día" → P1=13.856
+- Potencias MAXIMAS DEMANDADAS → IGNORAR SIEMPRE. Se reconocen por frases como:
+  * "La potencia maxima demandada en el suministro desde... ha sido:"
+  * "Potencias maximas demandadas durante el ciclo"
+  * Aparecen en seccion "Informacion de su interes" o al pie de la factura
+- Para 2.0TD: extrae P1 y P2. ATENCION: algunas comercializadoras (como DRK Energy) facturan la potencia como P1 y P3 en lugar de P1 y P2. En ese caso pon p1=valor_P1, p2=valor_P3, p3=0. Los otros campos p3 a p6 = 0.
+- Para 3.0TD: extrae P1 a P6.
+- VERIFICACION: Si P1 es un numero entero redondo (ej: 13, 15, 10) pero en la factura ves decimales (ej: 13,856), estas cometiendo un error. Revisa y corrige.
+
+=== CAMPO 5: ENERGIA CONSUMIDA (kWh del periodo) ===
+- EXTRAE el CONSUMO real del periodo. ATENCION a los separadores numericos:
+  * En facturas españolas el punto "." es separador de MILES: 18.000 kWh = DIECIOCHO kWh, NO dieciocho mil.
+  * Convierte siempre: 18.000 → 18, 15.000 → 15, 1.250 → 1.25, 235 → 235.
+- Para 2.0TD: E1=punta, E2=llano, E3=valle. Para 3.0TD: E1 a E6.
+- FUENTE PRIORITARIA (usa si existe):
+  * Tabla de lecturas del contador con columnas Punta/Llano/Valle: usa esos valores directamente.
+    Ejemplo: "punta: 102 kWh; llano: 118 kWh; valle 220 kWh" → e1=102, e2=118, e3=220
+  * Seccion "Energia" o "Termino energia" con P1/P2/P3:
+    "P1: 235 kWh" → e1=235
+- CASO ESPECIAL - Facturas con "Horas promocionadas / no promocionadas" (Iberdrola y similares):
+  * NUNCA uses "horas promocionadas" como E1 ni "horas no promocionadas" como E3.
+  * Estas facturas siempre incluyen los consumos reales desagregados por periodo en otra sección.
+  * Busca la frase "Sus consumos desagregados han sido punta: X kWh; llano: Y kWh; valle Z kWh"
+    → e1=X(punta), e2=Y(llano), e3=Z(valle)
+  * O busca la tabla de lecturas del contador con columnas Punta/Llano/Valle.
+  * Si no encuentras la desagregación, usa: e1=consumo_no_promocionado, e2=0, e3=consumo_promocionado
+    pero SIEMPRE intenta encontrar la desagregación real primero.
+- FUENTE SECUNDARIA (solo si no hay detalle):
+  * Tabla "Lecturas del contador": columna "Consumo" UNICAMENTE. NUNCA columnas "Actual" ni "Anterior".
+- NUNCA restes Actual menos Anterior. USA directamente la columna Consumo.
+- IGNORAR valores de 4-5 cifras sin contexto de consumo (son lecturas acumuladas del contador).
+
+=== CAMPO 6: TOTAL ===
+- Importe final con IVA incluido. Busca "TOTAL A PAGAR", "TOTAL FACTURA", "Total a pagar". Es el importe mas alto.
+
+=== CAMPO 7: NOMBRE DEL TITULAR ===
+- Busca en "Datos del titular", "Datos del cliente", "Nombre:" o similar.
+- Es el nombre completo de la persona o empresa titular del contrato.
+
+=== CAMPO 8: DIRECCIÓN DE SUMINISTRO ===
+- Busca en "Datos del suministro" o "Datos del punto de suministro".
+- Es la dirección donde está el punto de consumo (NO la dirección fiscal del titular).
+
+=== VERIFICACION ANTES DE RESPONDER ===
+Antes de generar el JSON, verifica mentalmente:
+1. ¿El CUPS que voy a poner aparece LITERALMENTE en la factura con la etiqueta "CUPS:"? Si no estoy seguro al 100%, escribo "DESCONOCIDO".
+2. ¿Las potencias son las CONTRATADAS del detalle de facturacion, no las maximas demandadas?
+3. ¿La energia son los kWh del periodo (valores pequeños), no lecturas acumuladas del contador?
+4. ¿He interpretado correctamente los separadores? En España: 18.000 kWh = 18 kWh (punto = miles).
+
+=== RESPUESTA ===
+Devuelve SOLO este JSON sin texto adicional ni markdown ni backticks:
+{"cups":"ES...","tarifa":"2.0TD","dias":30,"p1_kw":0.0,"p2_kw":0.0,"e1":0,"e2":0,"e3":0,"total":0.00,"nombre_cliente":"","notas":""}`;
   } else {
-    return `Analiza esta factura de gas española y devuelve SOLO este JSON sin texto adicional:
-{"cups":"ES...","dias":30,"total":45.50,"kwh":250,"tarifa":"RL.2","nombre_cliente":"","notas":""}
-- cups: código CUPS que empieza por ES
-- dias: días del período de facturación
-- total: importe total a pagar con IVA
-- kwh: kWh de gas consumidos en el período
-- tarifa: RL.1, RL.2, RL.3 etc.`;
+    return `Eres un experto en facturas de gas espanolas. Analiza esta factura.
+INSTRUCCIONES:
+1. CUPS: Codigo que empieza por ES de 20-22 caracteres. Busca la etiqueta explicita "CUPS:" en datos del suministro.
+2. DIAS: Dias del periodo de facturacion.
+3. KWH: kWh consumidos en el periodo.
+4. TOTAL: Importe final a pagar con IVA.
+5. TARIFA: Busca "RL.1", "RL.2", "RL.3" en la factura. Es el peaje de acceso de gas.
+6. NOMBRE_CLIENTE: Nombre completo del titular (persona o empresa). Busca en "Datos del titular" o "Nombre:".
+7. DIRECCION: Direccion del punto de suministro (NO la fiscal). Busca en "Datos del suministro".
+Devuelve SOLO este JSON sin texto adicional:
+{"cups":"ES...","dias":30,"kwh":250.0,"total":45.50,"tarifa":"RL.1","nombre_cliente":"","notas":""}`;
   }
 }
 
