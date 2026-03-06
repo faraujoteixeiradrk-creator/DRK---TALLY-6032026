@@ -811,7 +811,7 @@
 // ═══════════════════════════════════════════════
 // CONFIGURACIÓN
 // ═══════════════════════════════════════════════
-const WORKER_URL = 'https://drk-ai-proxy.f-araujo-teixeira-drk.workers.dev';
+const WORKER_URL = 'https://drk-cliente-proxy.f-araujo-teixeira-drk.workers.dev';
 const SHEET_ELEC = 'https://docs.google.com/spreadsheets/d/19CBiWVvxHoWW0fqdbSbLGs-hoISQGORAfebBztFYi3w/export?format=csv&gid=0';
 const SHEET_GAS  = 'https://docs.google.com/spreadsheets/d/1P_OSzj-sqDgT7_3KAdp7Y6ySA3ytsFHQKFvfZjAjsjE/export?format=csv&gid=0';
 
@@ -1075,54 +1075,142 @@ async function analizarFacturas() {
   }
 }
 
+// Normalizar parsed IA → objeto estándar (igual que cmNormalizarParsed del original)
+function normalizarParsedIA(parsed) {
+  const p = parsed.potencias_kw || {};
+  const e = parsed.energia_kwh || {};
+  const tipoIA = (parsed.tipo_suministro || '').toLowerCase().trim();
+  const tienePotencias = (p.p1 && p.p1 > 0) || (p.p2 && p.p2 > 0);
+  const validRL = ['RL1','RL2','RL3'];
+  let tarifa = (parsed.tarifa || '').toString().toUpperCase().replace(/[\s\.]/g,'');
+  if (tarifa.includes('20') || tarifa === '2TD') tarifa = '2.0TD';
+  else if (tarifa.includes('30') || tarifa === '3TD') tarifa = '3.0TD';
+  else if (tarifa.startsWith('RL')) tarifa = tarifa.replace('RL','RL.').replace('RL..','RL.');
+  const esGas = (tipoIA === 'gas' && !tienePotencias) ||
+    (validRL.includes(tarifa.replace('.','')) && tipoIA !== 'electricidad' && !tienePotencias);
+  const kwh = parsed.kwh || parsed.consumo_gas_kwh || (esGas ? (e.e1 || 0) : 0);
+  return {
+    cups:    (parsed.cups || '').toUpperCase().replace(/\s+/g,''),
+    tarifa:  esGas ? (tarifa.includes('.') ? tarifa : tarifa.replace('RL','RL.')) : (tarifa || '2.0TD'),
+    dias:    parsed.dias || 0,
+    total:   parsed.total_factura || parsed.total || 0,
+    p1_kw:   p.p1 || parsed.p1_kw || 0,
+    p2_kw:   p.p2 || parsed.p2_kw || 0,
+    e1:      esGas ? kwh : (e.e1 || parsed.e1 || 0),
+    e2:      e.e2 || parsed.e2 || 0,
+    e3:      e.e3 || parsed.e3 || 0,
+    kwh:     kwh,
+    esGas:   esGas,
+    nombre_cliente: parsed.nombre_cliente || '',
+    notas:   parsed.notas || ''
+  };
+}
+
+// Modal multipunto: igual que el original
+function mostrarModalMultipunto(fileName, suministros) {
+  return new Promise(resolve => {
+    const tipos = suministros.map((s,i) => {
+      const t = (s.tipo_suministro||'').toLowerCase() === 'gas' ? '🔥 Gas' : '⚡ Electricidad';
+      const tarifa = s.tarifa || '';
+      const cups = s.cups ? s.cups.substring(0,18) : 'Sin CUPS';
+      const nombre = s.nombre_cliente || '';
+      return `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f8fafc;border-radius:8px;border:2px solid #3b82f6;cursor:pointer;">
+        <input type="checkbox" id="mp-chk-${i}" checked style="width:18px;height:18px;accent-color:#3b82f6;cursor:pointer;flex-shrink:0;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.82rem;font-weight:700;color:#1e293b;">${t} · <span style="color:#3b82f6;">${tarifa}</span></div>
+          <div style="font-size:0.72rem;color:#64748b;font-family:monospace;">${cups}</div>
+          ${nombre ? `<div style="font-size:0.72rem;color:#94a3b8;">${nombre}</div>` : ''}
+        </div>
+      </label>`;
+    }).join('');
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;';
+    overlay.innerHTML = `
+      <div style="background:white;border-radius:20px;width:100%;max-width:440px;overflow:hidden;box-shadow:0 30px 60px rgba(0,0,0,0.4);">
+        <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:18px 22px;">
+          <div style="font-size:1.1rem;font-weight:900;color:white;">📋 Factura multipunto detectada</div>
+          <div style="font-size:0.78rem;color:rgba(255,255,255,0.85);margin-top:3px;">${fileName}</div>
+        </div>
+        <div style="padding:18px 20px;">
+          <p style="font-size:0.83rem;color:#475569;margin:0 0 12px 0;">
+            He detectado <strong>${suministros.length} suministros</strong>. Marca los que quieres importar:
+          </p>
+          <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px;">${tipos}</div>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+            <button id="mp-todos" style="font-size:0.72rem;padding:4px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;cursor:pointer;color:#3b82f6;font-weight:600;">✓ Todos</button>
+            <button id="mp-ninguno" style="font-size:0.72rem;padding:4px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;color:#64748b;font-weight:600;">✗ Ninguno</button>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button id="mp-cancelar" style="flex:1;padding:11px;background:#f1f5f9;border:none;border-radius:10px;font-weight:700;cursor:pointer;font-size:0.84rem;color:#64748b;">Cancelar</button>
+            <button id="mp-confirmar" style="flex:2;padding:11px;background:linear-gradient(135deg,#3b82f6,#2563eb);border:none;border-radius:10px;font-weight:900;cursor:pointer;font-size:0.84rem;color:white;">✅ Importar seleccionados</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#mp-todos').onclick    = () => suministros.forEach((_,i) => { const c = document.getElementById('mp-chk-'+i); if(c) c.checked=true; });
+    overlay.querySelector('#mp-ninguno').onclick  = () => suministros.forEach((_,i) => { const c = document.getElementById('mp-chk-'+i); if(c) c.checked=false; });
+    overlay.querySelector('#mp-cancelar').onclick = () => { document.body.removeChild(overlay); resolve([]); };
+    overlay.querySelector('#mp-confirmar').onclick = () => {
+      const sel = suministros.map((_,i) => document.getElementById('mp-chk-'+i)?.checked ? i : -1).filter(i => i >= 0);
+      document.body.removeChild(overlay);
+      resolve(sel);
+    };
+  });
+}
+
 async function extraerDatosIA(file, tipo) {
   const b64 = await toBase64(file);
-  // Igual que el original V19: PDF como document, imagen como image
+  // Prompt MULTIPUNTO - siempre detecta si hay 1 o más suministros (igual que original)
+  const promptMulti = promptIA(tipo);
   let messageContent = [];
   if (file.type === 'application/pdf') {
     messageContent = [
       { type:'document', source:{ type:'base64', media_type:'application/pdf', data:b64 }},
-      { type:'text', text: promptIA(tipo) }
+      { type:'text', text: promptMulti }
     ];
   } else {
     messageContent = [
       { type:'image', source:{ type:'base64', media_type:file.type, data:b64 }},
-      { type:'text', text: promptIA(tipo) }
+      { type:'text', text: promptMulti }
     ];
   }
-  // Igual que el original: claude-sonnet-4-6, max_tokens:2000
+  // claude-sonnet-4-6, max_tokens:3000 como el original
   const res = await fetch(WORKER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:2000, messages:[{ role:'user', content: messageContent }]})
+    body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:3000, messages:[{ role:'user', content: messageContent }]})
   });
   if (!res.ok) throw new Error('Error en la IA: ' + res.status);
   const data = await res.json();
   const text = data.content[0].text.trim();
   const m = text.match(/\{[\s\S]*\}/);
-  const parsed = JSON.parse(m ? m[0] : text);
+  const parsedRoot = JSON.parse(m ? m[0] : text);
 
-  // El prompt devuelve estructura plana {p1_kw, p2_kw, e1, e2, e3, total}
-  // Normalizar igual que el original por si devuelve estructura anidada
-  const p = parsed.potencias_kw || {};
-  const e = parsed.energia_kwh || {};
-  return {
-    cups:    parsed.cups || '',
-    tarifa:  parsed.tarifa || '2.0TD',
-    dias:    parsed.dias || 0,
-    total:   parsed.total || parsed.total_factura || 0,
-    // Potencias - acepta plano o anidado
-    p1_kw:   parsed.p1_kw || p.p1 || 0,
-    p2_kw:   parsed.p2_kw || p.p2 || 0,
-    // Energía - acepta plano o anidado
-    e1:      parsed.e1 || e.e1 || 0,
-    e2:      parsed.e2 || e.e2 || 0,
-    e3:      parsed.e3 || e.e3 || 0,
-    // Gas
-    kwh:     parsed.kwh || 0,
-    nombre_cliente: parsed.nombre_cliente || '',
-    notas:   parsed.notas || ''
-  };
+  // Soporte multipunto: devuelve {"suministros":[...]} o un objeto único
+  const suministrosRaw = parsedRoot.suministros || [parsedRoot];
+
+  if (suministrosRaw.length <= 1) {
+    // Un solo suministro - normalizar y devolver
+    return normalizarParsedIA(suministrosRaw[0] || parsedRoot);
+  }
+
+  // MULTIPUNTO: mostrar modal y dejar elegir
+  const seleccionados = await mostrarModalMultipunto(file.name, suministrosRaw);
+  if (!seleccionados || seleccionados.length === 0) return null; // cancelado
+
+  const normalizados = seleccionados.map(i => normalizarParsedIA(suministrosRaw[i]));
+
+  // Asignar electricidad y gas automáticamente
+  const elec = normalizados.find(n => !n.esGas);
+  const gas  = normalizados.find(n => n.esGas);
+
+  if (elec && tipoSeleccionado !== 'gas') datosElec = elec;
+  if (gas  && tipoSeleccionado !== 'electricidad') datosGas = gas;
+
+  // Devolver el principal según tipo solicitado
+  if (tipo === 'gas') return gas || normalizados[0];
+  return elec || normalizados[0];
 }
 
 function promptIA(tipo) {
@@ -1207,8 +1295,12 @@ Antes de generar el JSON, verifica mentalmente:
 4. ¿He interpretado correctamente los separadores? En España: 18.000 kWh = 18 kWh (punto = miles).
 
 === RESPUESTA ===
+IMPORTANTE: Una factura puede contener MÁS DE UN suministro (electricidad + gas juntos). Busca TODOS los bloques con CUPS distintos.
 Devuelve SOLO este JSON sin texto adicional ni markdown ni backticks:
-{"cups":"ES...","tarifa":"2.0TD","dias":30,"potencias_kw":{"p1":0.0,"p2":0.0,"p3":0.0,"p4":0.0,"p5":0.0,"p6":0.0},"energia_kwh":{"e1":0,"e2":0,"e3":0,"e4":0,"e5":0,"e6":0},"total_factura":0.00,"nombre_cliente":"","notas":""}`;
+{"suministros":[{"tipo_suministro":"electricidad","cups":"ES...","tarifa":"2.0TD","dias":30,"potencias_kw":{"p1":0.0,"p2":0.0,"p3":0.0,"p4":0.0,"p5":0.0,"p6":0.0},"energia_kwh":{"e1":0,"e2":0,"e3":0,"e4":0,"e5":0,"e6":0},"total_factura":0.00,"nombre_cliente":"","notas":""}]}
+Si solo hay un suministro devuelve el array con 1 elemento. Si hay electricidad + gas, devuelve 2 elementos.
+- tipo_suministro: "electricidad" o "gas"
+- Para gas: energia_kwh.e1 = kWh consumidos, tarifa = "RL.1"/"RL.2"/"RL.3", consumo_gas_kwh = kWh`;
   } else {
     return `Eres un experto en facturas de gas espanolas. Analiza esta factura.
 INSTRUCCIONES:
