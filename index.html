@@ -911,23 +911,20 @@ async function cargarTarifas() {
     console.log('📋 Fila 1 electricidad:', rawE[0]);
     console.log('📋 Total filas electricidad:', rawE.length);
 
-    tarifasElec = rawE.filter(r => {
-      const t = (r.Tarifa || r.tarifa || '').trim();
-      return t === '2.0TD' || t === '2.0 TD';
-    }).map(r => ({
+    tarifasElec = rawE.map(r => ({
       name: r.name || r.Name || '',
       description: r.description || r.Description || '',
-      tarifa: r.Tarifa || r.tarifa || '2.0TD',
-      p1_price: parseEU(r.p1_price || r.P1_price || 0),
-      p2_price: parseEU(r.p2_price || r.P2_price || 0),
-      p3_price: parseEU(r.p3_price || r.P3_price || 0),
-      p1_kw: parseEU(r.p1_kw || r.P1_kw || r.p1_kW || 0),
-      p2_kw: parseEU(r.p2_kw || r.P2_kw || r.p2_kW || 0),
-      descuento_energia: parseEU(r.Descuento_Energia || r.descuento_energia || 0),
-      descuento_potencia: parseEU(r.Descuento_Potencia || r.descuento_potencia || 0),
-      comision: parseEU(r.COMISION || r.comision || r.Comision || 0),
-    }));
-    console.log(`✅ ${tarifasElec.length} tarifas electricidad 2.0TD`);
+      tarifa: r.TARIFA || r.Tarifa || r.tarifa || '2.0TD',
+      p1_price: parseEU(r.p1_price || 0),
+      p2_price: parseEU(r.p2_price || 0),
+      p3_price: parseEU(r.p3_price || 0),
+      p1_kw: parseEU(r.p_potencia_1 || r.p1_kw || r.P1_kw || 0),
+      p2_kw: parseEU(r.p_potencia_2 || r.p2_kw || r.P2_kw || 0),
+      descuento_energia: parseEU(r.DESCUENTO || r.Descuento_Energia || r.descuento_energia || 0),
+      descuento_potencia: parseEU(r.DESCUENTO || r.Descuento_Potencia || r.descuento_potencia || 0),
+      comision: parseEU(r.COMISION || r.comision || 0),
+    })).filter(r => r.name !== '');
+    console.log(`✅ ${tarifasElec.length} tarifas electricidad cargadas`);
     if (tarifasElec.length > 0) console.log('📋 Primera tarifa elec:', tarifasElec[0]);
 
     // Gas
