@@ -1712,13 +1712,29 @@ async function enviarSolicitud() {
 
   try {
     // Enviar email al cliente via Worker
+    const fmt2 = v => v ? Number(v).toFixed(4) : '—';
     const payload = {
       to: email,
       nombre,
-      ahorro_elec: mejorElec ? Math.round(mejorElec._ahorroAnual) : null,
-      ahorro_gas:  mejorGas  ? Math.round(mejorGas._ahorroAnual)  : null,
-      tarifa_elec: mejorElec ? `${mejorElec.name} ${mejorElec.description||''}`.trim() : null,
-      tarifa_gas:  mejorGas  ? `${mejorGas.name} ${mejorGas.description||''}`.trim()  : null,
+      tel,
+      cups_elec: datosElec?.cups || '',
+      cups_gas:  datosGas?.cups  || '',
+      ahorro_elec:    mejorElec ? Math.round(mejorElec._ahorroAnual) : null,
+      tarifa_elec:    mejorElec ? (mejorElec.name + ' ' + (mejorElec.description||'')).trim() : null,
+      e1_precio:      mejorElec ? fmt2(mejorElec.p1_price) : null,
+      e2_precio:      mejorElec ? fmt2(mejorElec.p2_price) : null,
+      e3_precio:      mejorElec ? fmt2(mejorElec.p3_price) : null,
+      p1_precio:      mejorElec ? fmt2(mejorElec.p_potencia_1) : null,
+      p2_precio:      mejorElec ? fmt2(mejorElec.p_potencia_2) : null,
+      descuento_elec: mejorElec ? (mejorElec.DESCUENTO || 0) : null,
+      coste_elec:     mejorElec ? mejorElec._coste.toFixed(2) : null,
+      factura_elec:   datosElec?.total || null,
+      ahorro_gas:     mejorGas ? Math.round(mejorGas._ahorroAnual) : null,
+      tarifa_gas:     mejorGas ? (mejorGas.name + ' ' + (mejorGas.description||'')).trim() : null,
+      gas_precio:     mejorGas ? fmt2(mejorGas.p1_price) : null,
+      gas_fijo:       mejorGas ? fmt2(mejorGas.p_fijo_diario) : null,
+      coste_gas:      mejorGas ? mejorGas._coste.toFixed(2) : null,
+      factura_gas:    datosGas?.total || null,
     };
 
     const res = await fetch(WORKER_URL + '/send-email', {
