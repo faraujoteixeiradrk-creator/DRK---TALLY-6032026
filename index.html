@@ -868,88 +868,66 @@ function setProgress(pct, titulo, sub) {
 // ═══════════════════════════════════════════════
 // CARGA DE TARIFAS
 // ═══════════════════════════════════════════════
-function parseCSV(text) {
-  // Parser robusto para CSV de Google Sheets con comillas y comas decimales
-  function parseLine(line) {
+function parseCSVOriginal(text, tariffType) {
+  const parseLineCSV = (line) => {
     const result = [];
-    let current = '';
-    let inQuotes = false;
+    let cur = '', inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i+1] === '"') { current += '"'; i++; }
-        else inQuotes = !inQuotes;
-      } else if (ch === ',' && !inQuotes) {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += ch;
-      }
+      if (ch === '"') { if (inQ && line[i+1]==='"'){cur+='"';i++;} else inQ=!inQ; }
+      else if (ch === ',' && !inQ) { result.push(cur.trim()); cur=''; }
+      else cur += ch;
     }
-    result.push(current.trim());
+    result.push(cur.trim());
     return result;
-  }
-
+  };
   const lines = text.trim().split('\n').filter(l => l.trim());
-  const headers = parseLine(lines[0]);
-  return lines.slice(1).map(line => {
-    const vals = parseLine(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = (vals[i] || '').trim(); });
-    return obj;
-  }).filter(r => (r.name || r.Name || '').trim() !== '');
+  const headers = parseLineCSV(lines[0]);
+  const data = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseLineCSV(lines[i]);
+    while (values.length < headers.length) values.push('');
+    let item = { cups_match: [tariffType] };
+    headers.forEach((h, idx) => {
+      let val = values[idx];
+      if (h.includes('price') || h.includes('potencia') || h === 'descuento' || h === 'DESCUENTO' ||
+          h === 'comision' || h === 'COMISION' || h.includes('fijo') || h.includes('Descuento')) {
+        val = parseFloat((val || '0').replace(',', '.'));
+        if (isNaN(val)) val = 0;
+      }
+      item[h] = val;
+    });
+    item.isDrk = (item.name||'').toUpperCase().includes('DRK') ||
+                 (item.description||'').toUpperCase().includes('DRK');
+    if (item.p1_price !== undefined) data.push(item);
+  }
+  return data;
 }
 
 async function cargarTarifas() {
   try {
-    // Electricidad
+    // ELECTRICIDAD - solo tarifas FIJAS (sin INDEX)
     const rE = await fetch(SHEET_ELEC);
     const csvE = await rE.text();
-    console.log('📋 CSV Electricidad primeras 300 chars:', csvE.substring(0,300));
-    const rawE = parseCSV(csvE);
-    console.log('📋 Headers electricidad:', Object.keys(rawE[0] || {}));
-    console.log('📋 Fila 1 electricidad:', rawE[0]);
-    console.log('📋 Total filas electricidad:', rawE.length);
+    const rawE = parseCSVOriginal(csvE, '2.0TD');
+    tarifasElec = rawE.filter(r => {
+      const name = (r.name||'').toUpperCase();
+      const desc = (r.description||'').toUpperCase();
+      return !name.includes('INDEX') && !desc.includes('INDEX');
+    });
+    console.log(`✅ ${tarifasElec.length} tarifas elec FIJAS (de ${rawE.length} total)`);
+    if (tarifasElec.length > 0) console.log('📋 1ª tarifa elec:', JSON.stringify(tarifasElec[0]));
 
-    tarifasElec = rawE.map(r => ({
-      name: r.name || r.Name || '',
-      description: r.description || r.Description || '',
-      tarifa: r.TARIFA || r.Tarifa || r.tarifa || '2.0TD',
-      p1_price: parseEU(r.p1_price || 0),
-      p2_price: parseEU(r.p2_price || 0),
-      p3_price: parseEU(r.p3_price || 0),
-      p1_kw: parseEU(r.p_potencia_1 || r.p1_kw || r.P1_kw || 0),
-      p2_kw: parseEU(r.p_potencia_2 || r.p2_kw || r.P2_kw || 0),
-      descuento_energia: parseEU(r.DESCUENTO || r.Descuento_Energia || r.descuento_energia || 0),
-      descuento_potencia: parseEU(r.DESCUENTO || r.Descuento_Potencia || r.descuento_potencia || 0),
-      comision: parseEU(r.COMISION || r.comision || 0),
-    })).filter(r => r.name !== '');
-    console.log(`✅ ${tarifasElec.length} tarifas electricidad cargadas`);
-    if (tarifasElec.length > 0) console.log('📋 Primera tarifa elec:', tarifasElec[0]);
-
-    // Gas
+    // GAS - todas incluidas indexadas
     const rG = await fetch(SHEET_GAS);
     const csvG = await rG.text();
-    console.log('📋 CSV Gas primeras 300 chars:', csvG.substring(0,300));
-    const rawG = parseCSV(csvG);
-    console.log('📋 Headers gas:', Object.keys(rawG[0] || {}));
-    console.log('📋 Fila 1 gas:', rawG[0]);
-    console.log('📋 Total filas gas:', rawG.length);
-
+    const rawG = parseCSVOriginal(csvG, 'GAS');
     tarifasGas = rawG.filter(r => {
-      const t = (r.Tarifa || r.tarifa || '').trim().toUpperCase();
-      return ['RL.1','RL.2','RL.3','RL1','RL2','RL3'].includes(t);
-    }).map(r => ({
-      name: r.name || r.Name || '',
-      description: r.description || r.Description || '',
-      tarifa: r.Tarifa || r.tarifa || '',
-      p1_price: parseEU(r.p1_price || r.P1_price || r.precio_kwh || 0),
-      p_fijo: parseEU(r.p_fijo_1 || r.P_fijo_1 || r.p_fijo || 0),
-      descuento_energia: parseEU(r.Descuento_Energia || r.descuento_energia || 0),
-      comision: parseEU(r.COMISION || r.comision || r.Comision || 0),
-    }));
+      const t = (r.Tarifa||r.tarifa||'').trim().toUpperCase().replace('.','');
+      return ['RL1','RL2','RL3'].includes(t);
+    });
     console.log(`✅ ${tarifasGas.length} tarifas gas RL1/2/3`);
-    if (tarifasGas.length > 0) console.log('📋 Primera tarifa gas:', tarifasGas[0]);
+    if (tarifasGas.length > 0) console.log('📋 1ª tarifa gas:', JSON.stringify(tarifasGas[0]));
 
   } catch(e) {
     console.error('❌ Error cargando tarifas:', e);
@@ -1199,61 +1177,62 @@ function mostrarConfirmar() {
 // CÁLCULO DE AHORRO
 // ═══════════════════════════════════════════════
 function calcularCosteElec(tarifa, datos) {
+  // Lógica exacta de calculateTariffCost del original V19 para 2.0TD
+  const IVA = 0.21;
+  const IE  = 0.05113;
   const dias = datos.dias || 30;
-  const e1 = datos.e1 || 0;
-  const e2 = datos.e2 || 0;
-  const e3 = datos.e3 || 0;
-  const p1kw = datos.p1_kw || 0;
-  const p2kw = datos.p2_kw || 0;
 
-  // Precios energía con descuento (€/kWh)
-  const de = tarifa.descuento_energia / 100;
-  const pe1 = tarifa.p1_price * (1 - de);
-  const pe2 = tarifa.p2_price * (1 - de);
-  const pe3 = tarifa.p3_price * (1 - de);
-  const costeEnergia = e1*pe1 + e2*pe2 + e3*pe3;
+  // Potencia: p_potencia_1 y p_potencia_2 son €/kW/año
+  const subPower =
+    (datos.p1_kw || 0) * dias * ((tarifa.p_potencia_1 || 0) / 365) +
+    (datos.p2_kw || 0) * dias * ((tarifa.p_potencia_2 || 0) / 365);
 
-  // Precios potencia con descuento (€/kW/año → prorrateado por días)
-  const dp = tarifa.descuento_potencia / 100;
-  const pp1 = tarifa.p1_kw * (1 - dp) * p1kw * (dias/365);
-  const pp2 = tarifa.p2_kw * (1 - dp) * p2kw * (dias/365);
-  const costePotencia = pp1 + pp2;
+  // Energía: punta=p1_price, llano=p2_price, valle=p3_price
+  const subEnergyBruto =
+    (datos.e1 || 0) * (tarifa.p1_price || 0) +
+    (datos.e2 || 0) * (tarifa.p2_price || 0) +
+    (datos.e3 || 0) * (tarifa.p3_price || 0);
 
-  // IVA electricidad 21%
-  const baseImponible = costeEnergia + costePotencia;
-  const impElec = baseImponible * 0.0511269632;
-  const subtotal = (baseImponible + impElec) * 1.21;
-  return subtotal;
+  // Descuento sobre energía (columna DESCUENTO)
+  const descuento = (tarifa.DESCUENTO || tarifa.descuento || 0) / 100;
+  const subEnergyNeto = subEnergyBruto * (1 - descuento);
+
+  // Impuestos
+  const subBase = subPower + subEnergyNeto;
+  const costIE  = subBase * IE;
+  const baseImp = subBase + costIE;
+  const costIVA = baseImp * IVA;
+  return baseImp + costIVA;
 }
 
 function calcularCosteGas(tarifa, datos) {
+  const IVA  = 0.21;
   const dias = datos.dias || 30;
-  const kwh = datos.kwh || 0;
-
-  // Precio energía con descuento
-  const precioKwh = tarifa.p1_price * (1 - tarifa.descuento_energia/100);
-
-  // Término fijo prorrateado
-  const fijoDiario = tarifa.p_fijo / 365;
-  const costeAnualFijo = fijoDiario * dias;
-
+  const kwh  = datos.kwh  || 0;
+  // Descuento energía
+  const descE = (tarifa.Descuento_Energia || tarifa.descuento_energia || 0) / 100;
+  const precioKwh = (tarifa.p1_price || 0) * (1 - descE);
   const costeEnergia = kwh * precioKwh;
-  const subtotal = (costeEnergia + costeAnualFijo) * 1.21; // IVA
-  return subtotal;
+  // Fijo anual prorrateado
+  const fijo = (tarifa.p_fijo_1 || tarifa.p_fijo || 0);
+  const costeFijo = fijo * (dias / 365);
+  return (costeEnergia + costeFijo) * (1 + IVA);
 }
 
 function calcularComisionElec(tarifa, datos) {
-  // kWh_mensuales × 12 / 1000 × FEE
-  const diasEnMes = datos.dias || 30;
+  // kWh_mensuales × 12 / 1000 × FEE (columna COMISION)
+  const dias = datos.dias || 30;
   const totalKwh = (datos.e1||0) + (datos.e2||0) + (datos.e3||0);
-  const kwhMensual = totalKwh * (30 / diasEnMes);
-  return kwhMensual * 12 / 1000 * tarifa.comision;
+  const kwhMensual = totalKwh * (30 / dias);
+  const fee = tarifa.COMISION || tarifa.comision || 0;
+  return kwhMensual * 12 / 1000 * fee;
 }
 
 function calcularComisionGas(tarifa, datos) {
-  const diasEnMes = datos.dias || 30;
-  const kwhMensual = (datos.kwh||0) * (30 / diasEnMes);
-  return kwhMensual * 12 / 1000 * tarifa.comision;
+  const dias = datos.dias || 30;
+  const kwhMensual = (datos.kwh||0) * (30 / dias);
+  const fee = tarifa.COMISION || tarifa.comision || 0;
+  return kwhMensual * 12 / 1000 * fee;
 }
 
 function calcularAhorro() {
