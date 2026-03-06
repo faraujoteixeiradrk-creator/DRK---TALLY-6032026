@@ -923,8 +923,12 @@ async function cargarTarifas() {
     const csvG = await rG.text();
     const rawG = parseCSVOriginal(csvG, 'GAS');
     tarifasGas = rawG.filter(r => {
-      const t = (r.Tarifa||r.tarifa||'').trim().toUpperCase().replace('.','');
-      return ['RL1','RL2','RL3'].includes(t);
+      const t = (r.Tarifa||'').trim().toUpperCase();
+      return t === 'RL.1' || t === 'RL.2' || t === 'RL.3';
+    }).filter(r => {
+      // Solo DRK (igual que el original)
+      const name = (r.name||'').toLowerCase();
+      return name.includes('drk');
     });
     console.log(`✅ ${tarifasGas.length} tarifas gas RL1/2/3`);
     if (tarifasGas.length > 0) console.log('📋 1ª tarifa gas:', JSON.stringify(tarifasGas[0]));
@@ -1205,30 +1209,59 @@ function calcularCosteElec(tarifa, datos) {
   return baseImp + costIVA;
 }
 
-function calcularCosteGas(tarifa, datos) {
+function calcularGasTarifa(tarifa, datos) {
   // Lógica EXACTA de calculateGasTariff del original V19
-  const parseEU = v => parseFloat(String(v||0).replace(/\./g,'').replace(',','.')) || 0;
+  const pEU = v => parseFloat(String(v||0).trim().replace(/\./g,'').replace(',','.')) || 0;
   const dias = datos.dias || 30;
   const kwh  = datos.kwh  || 0;
+  const totalCliente = datos.total || 0;
 
-  const p1_price         = parseEU(tarifa.p1_price || 0);
-  const descuento_energia= parseEU(tarifa.Descuento_Energia || tarifa.descuento_energia || 0) / 100;
-  const p_fijo_anual     = parseEU(tarifa.p_fijo_1 || tarifa.p_fijo || 0);
-  const descuento_fijo   = parseEU(tarifa.Descuento_Potencia || tarifa.descuento_potencia || 0) / 100;
+  const p1_price          = pEU(tarifa.p1_price);
+  const descuento_energia = pEU(tarifa.Descuento_Energia) / 100;
+  const p_fijo_anual      = pEU(tarifa.p_fijo_1);
+  const descuento_fijo    = pEU(tarifa.Descuento_Potencia) / 100;
+  const comision          = pEU(tarifa.COMISION || tarifa.comision);
 
-  // 1. Término fijo (con descuento)
+  // 1. Término fijo
   const p_fijo_diario = p_fijo_anual / 365;
   const total_fijo = p_fijo_diario * (1 - descuento_fijo) * dias;
 
   // 2. Energía
   const total_energia = kwh * p1_price * (1 - descuento_energia);
 
-  // 3. Impuesto hidrocarburos (0.00234 €/kWh)
+  // 3. Impuesto hidrocarburos
   const imp_hidro = 0.00234 * kwh;
 
   // 4. Subtotal + IVA 21%
   const subtotal = total_fijo + total_energia + imp_hidro;
-  return subtotal * 1.21;
+  const total = subtotal * 1.21;
+
+  // 5. Ahorro - EXACTO como el original
+  const ahorro_periodo = totalCliente - total;
+  const ahorro_mensual = dias !== 30 ? (ahorro_periodo * 30) / dias : ahorro_periodo;
+  const ahorro_anual   = ahorro_mensual * 12;
+
+  // 6. Comisión - exacto como el original
+  const comision_anual = kwh > 0 && comision > 0 ? (kwh / 1000) * comision * 12 : 0;
+
+  return {
+    name: tarifa.name || '',
+    description: tarifa.description || '',
+    Tarifa: tarifa.Tarifa || '',
+    p1_price, p_fijo_diario, total_fijo, total_energia, subtotal, total,
+    ahorro_periodo, ahorro_mensual, ahorro_anual, comision_anual,
+    _coste: total,
+    _ahorro: ahorro_periodo,
+    _ahorroAnual: ahorro_anual,
+    _comision: comision_anual,
+    _score: ahorro_anual + comision_anual,
+    // para mostrar precios
+    p_fijo_1: p_fijo_anual,
+    COMISION: comision
+  };
+}
+function calcularCosteGas(tarifa, datos) {
+  return calcularGasTarifa(tarifa, datos).total;
 }
 
 function calcularComisionElec(tarifa, datos) {
@@ -1257,41 +1290,40 @@ function calcularAhorro() {
     const tarifasFiltradasE = tarifasElec.map(t => {
       const coste = calcularCosteElec(t, datosElec);
       const ahorroCliente = datosElec.total - coste;
+      // Igual que el original: ahorro_mensual * 12
+      const dias = datosElec.dias || 30;
+      const ahorroMensual = dias !== 30 ? (ahorroCliente * 30) / dias : ahorroCliente;
+      const ahorroAnual = ahorroMensual * 12;
       const comision = calcularComisionElec(t, datosElec);
-      const score = ahorroCliente + comision;
-      return { ...t, _coste: coste, _ahorro: ahorroCliente, _comision: comision, _score: score };
+      const score = ahorroAnual + comision;
+      return { ...t, _coste: coste, _ahorro: ahorroCliente, _ahorroAnual: ahorroAnual, _comision: comision, _score: score };
     });
-    console.log('📊 Ejemplo cálculo 1ª tarifa:', tarifasFiltradasE[0] ? `coste=${tarifasFiltradasE[0]._coste.toFixed(2)} ahorro=${tarifasFiltradasE[0]._ahorro.toFixed(2)}` : 'sin tarifas');
+    console.log('📊 1ª tarifa:', tarifasFiltradasE[0] ? `coste=${tarifasFiltradasE[0]._coste.toFixed(2)} ahorroAnual=${tarifasFiltradasE[0]._ahorroAnual.toFixed(2)}` : 'sin tarifas');
 
-    const conAhorro = tarifasFiltradasE.filter(t => t._ahorro > 0).sort((a, b) => b._score - a._score);
-    console.log(`✅ ${conAhorro.length} tarifas con ahorro positivo de ${tarifasFiltradasE.length}`);
-
-    // Si no hay ahorro positivo, mostrar las mejores de todas formas (top 5 por menor coste)
-    const mostrar = conAhorro.length > 0 ? conAhorro : tarifasFiltradasE.sort((a,b) => b._score - a._score);
-    resultadoElec = mostrar;
-    mostrarResultadoElec(mostrar);
+    const conAhorro = tarifasFiltradasE.filter(t => t._ahorroAnual > 0).sort((a, b) => b._score - a._score);
+    console.log(`✅ ${conAhorro.length} tarifas elec con ahorro de ${tarifasFiltradasE.length}`);
+    resultadoElec = conAhorro.length > 0 ? conAhorro : tarifasFiltradasE.sort((a,b) => b._score - a._score);
+    mostrarResultadoElec(resultadoElec);
   }
 
   // Gas
   if (datosGas && tipoSeleccionado !== 'electricidad') {
-    const tarifaDetectada = (datosGas.tarifa || '').replaceAll('.','').replaceAll(' ','').toUpperCase();
-    console.log('🔥 Tarifa gas detectada:', tarifaDetectada, '| tarifasGas total:', tarifasGas.length);
-    const tarifasFiltradas = tarifasGas.filter(t => {
-      const tt = (t.Tarifa||t.tarifa||'').replaceAll('.','').replaceAll(' ','').toUpperCase();
-      return !tarifaDetectada || tt === tarifaDetectada;
+    const tarifaDetectada = (datosGas.tarifa || '').trim().toUpperCase()
+      .replace(/RL(\d)/, 'RL.$1'); // RL1 → RL.1
+    console.log('🔥 Tarifa gas buscada:', tarifaDetectada, '| total tarifas:', tarifasGas.length);
+
+    const usadas = tarifasGas.filter(t => {
+      const tv = (t.Tarifa||'').trim().toUpperCase();
+      return !tarifaDetectada || tv === tarifaDetectada;
     });
-    console.log('🔥 Tarifas gas filtradas:', tarifasFiltradas.length);
-    const usadas = tarifasFiltradas.length > 0 ? tarifasFiltradas : tarifasGas;
+    const usarTodas = usadas.length > 0 ? usadas : tarifasGas;
+    console.log('🔥 Tarifas gas usadas:', usarTodas.length);
 
-    const result = usadas.map(t => {
-      const coste = calcularCosteGas(t, datosGas);
-      const ahorroCliente = datosGas.total - coste;
-      const comision = calcularComisionGas(t, datosGas);
-      const score = ahorroCliente + comision;
-      return { ...t, _coste: coste, _ahorro: ahorroCliente, _comision: comision, _score: score };
-    }).filter(t => t._ahorro > 0).sort((a, b) => b._score - a._score);
+    const result = usarTodas.map(t => calcularGasTarifa(t, datosGas))
+      .filter(r => r._ahorroAnual > 0)
+      .sort((a, b) => b._score - a._score);
 
-    console.log('🔥 Tarifas gas con ahorro:', result.length);
+    console.log('🔥 Tarifas con ahorro positivo:', result.length);
     resultadoGas = result;
     mostrarResultadoGas(result);
   }
@@ -1312,15 +1344,14 @@ function mostrarResultadoElec(tarifas) {
   }
 
   const mejor = tarifas[0];
-  const ahorroAnual = mejor._ahorro * (365 / (datosElec.dias || 30));
+  const ahorroAnual = mejor._ahorroAnual || mejor._ahorro * (365 / (datosElec.dias || 30));
+  const actualAnual = datosElec.total * (365 / (datosElec.dias || 30));
+  const costeAnual  = actualAnual - ahorroAnual;
 
   document.getElementById('ahorro-elec-amount').textContent = fmt(ahorroAnual) + ' €';
   document.getElementById('ahorro-elec-sub').textContent =
     `Con ${mejor.name}${mejor.description ? ' · ' + mejor.description : ''}`;
 
-  // Comparativa
-  const costeAnual = mejor._coste * (365 / (datosElec.dias || 30));
-  const actualAnual = datosElec.total * (365 / (datosElec.dias || 30));
   document.getElementById('compare-elec').innerHTML = `
     <div class="compare-row">
       <span class="label">Tu factura actual (anual)</span>
@@ -1340,7 +1371,7 @@ function mostrarResultadoElec(tarifas) {
   const lista = document.getElementById('lista-tarifas-elec');
   lista.innerHTML = '';
   tarifas.slice(0, 5).forEach((t, i) => {
-    const ah = t._ahorro * (365 / (datosElec.dias || 30));
+    const ah = t._ahorroAnual || t._ahorro * (365 / (datosElec.dias || 30));
     const div = document.createElement('div');
     div.className = 'tarifa-card' + (i === 0 ? ' best' : '');
     div.innerHTML = `
@@ -1374,19 +1405,21 @@ function mostrarResultadoGas(tarifas) {
 
   if (!tarifas.length) {
     document.getElementById('ahorro-gas-amount').textContent = 'Sin oferta';
+    document.getElementById('compare-gas').innerHTML = '';
+    document.getElementById('lista-tarifas-gas').innerHTML = '';
     return;
   }
 
   const mejor = tarifas[0];
-  const ahorroAnual = mejor._ahorro * (365 / (datosGas.dias || 30));
+  // Usar ahorro_anual exacto del cálculo (igual que original: ahorro_mensual × 12)
+  const ahorroAnual = mejor._ahorroAnual || mejor.ahorro_anual || 0;
+  const actualAnual = datosGas.total * (365 / (datosGas.dias || 30));
+  const costeAnual  = actualAnual - ahorroAnual;
 
   document.getElementById('ahorro-gas-amount').textContent = fmt(ahorroAnual) + ' €';
   document.getElementById('ahorro-gas-sub').textContent =
     `Con ${mejor.name}${mejor.description ? ' · ' + mejor.description : ''}`;
 
-  // Comparativa
-  const costeAnual = mejor._coste * (365 / (datosGas.dias || 30));
-  const actualAnual = datosGas.total * (365 / (datosGas.dias || 30));
   document.getElementById('compare-gas').innerHTML = `
     <div class="compare-row">
       <span class="label">Tu factura actual (anual)</span>
@@ -1405,15 +1438,16 @@ function mostrarResultadoGas(tarifas) {
   const lista = document.getElementById('lista-tarifas-gas');
   lista.innerHTML = '';
   tarifas.slice(0, 5).forEach((t, i) => {
-    const ah = t._ahorro * (365 / (datosGas.dias || 30));
+    const ah = t._ahorroAnual || t.ahorro_anual || 0;
+    const esIndexada = (t.name||'').toUpperCase().includes('INDEX');
     const div = document.createElement('div');
     div.className = 'tarifa-card' + (i === 0 ? ' best' : '');
     div.innerHTML = `
       ${i === 0 ? '<div class="best-badge">⭐ Mejor opción para ti</div>' : ''}
       <div class="tarifa-top">
         <div>
-          <div class="tarifa-name">${t.name}</div>
-          <div class="tarifa-desc">${t.description || t.tarifa}</div>
+          <div class="tarifa-name">${t.name} ${esIndexada ? '<span style="background:#fed7aa;color:#c2410c;font-size:0.65rem;padding:2px 6px;border-radius:8px;font-weight:700;margin-left:4px;">INDEXADA</span>' : ''}</div>
+          <div class="tarifa-desc">${t.description || ''} · ${t.Tarifa||''}</div>
         </div>
         <div>
           <div class="tarifa-ahorro">+${fmt(ah)} €</div>
@@ -1421,9 +1455,9 @@ function mostrarResultadoGas(tarifas) {
         </div>
       </div>
       <div class="tarifa-precios">
-        <div class="precio-item"><div class="precio-val">${fmt(t.p1_price,4)}</div><div class="precio-label">€/kWh</div></div>
-        <div class="precio-item"><div class="precio-val">${fmt(t.p_fijo,2)}</div><div class="precio-label">€/año fijo</div></div>
-        <div class="precio-item"><div class="precio-val">${t.tarifa}</div><div class="precio-label">Tarifa acceso</div></div>
+        <div class="precio-item"><div class="precio-val">${fmt(t.p_fijo_diario||0,5)}</div><div class="precio-label">🔥 €/día fijo</div></div>
+        <div class="precio-item"><div class="precio-val">${fmt(t.p1_price||0,5)}</div><div class="precio-label">🔥 €/kWh energía</div></div>
+        <div class="precio-item"><div class="precio-val">${fmt(t._comision||0,2)}</div><div class="precio-label">💰 comisión/año</div></div>
       </div>
     `;
     lista.appendChild(div);
