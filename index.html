@@ -913,24 +913,27 @@ async function cargarTarifas() {
     tarifasElec = rawE.filter(r => {
       const name = (r.name||'').toUpperCase();
       const desc = (r.description||'').toUpperCase();
-      return !name.includes('INDEX') && !desc.includes('INDEX');
+      // Solo DRK Y sin INDEX (fijas)
+      const esDrk = name.includes('DRK') || desc.includes('DRK') || r.isDrk === true;
+      const esIndexada = name.includes('INDEX') || desc.includes('INDEX');
+      return esDrk && !esIndexada;
     });
-    console.log(`✅ ${tarifasElec.length} tarifas elec FIJAS (de ${rawE.length} total)`);
+    console.log(`✅ ${tarifasElec.length} tarifas elec DRK FIJAS (de ${rawE.length} total)`);
     if (tarifasElec.length > 0) console.log('📋 1ª tarifa elec:', JSON.stringify(tarifasElec[0]));
 
-    // GAS - todas incluidas indexadas
+    // GAS - solo DRK indexadas (RL1/2/3)
     const rG = await fetch(SHEET_GAS);
     const csvG = await rG.text();
     const rawG = parseCSVOriginal(csvG, 'GAS');
     tarifasGas = rawG.filter(r => {
-      const t = (r.Tarifa||'').trim().toUpperCase();
-      return t === 'RL.1' || t === 'RL.2' || t === 'RL.3';
-    }).filter(r => {
-      // Solo DRK (igual que el original)
-      const name = (r.name||'').toLowerCase();
-      return name.includes('drk');
+      const t    = (r.Tarifa||'').trim().toUpperCase();
+      const name = (r.name||'').toUpperCase();
+      const desc = (r.description||'').toUpperCase();
+      const esTarifaRL = t === 'RL.1' || t === 'RL.2' || t === 'RL.3';
+      const esDrk = name.includes('DRK') || desc.includes('DRK') || r.isDrk === true;
+      return esTarifaRL && esDrk;
     });
-    console.log(`✅ ${tarifasGas.length} tarifas gas RL1/2/3`);
+    console.log(`✅ ${tarifasGas.length} tarifas gas DRK RL1/2/3`);
     if (tarifasGas.length > 0) console.log('📋 1ª tarifa gas:', JSON.stringify(tarifasGas[0]));
 
   } catch(e) {
