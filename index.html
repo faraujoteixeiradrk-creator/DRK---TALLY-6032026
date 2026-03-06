@@ -1184,46 +1184,57 @@ function mostrarConfirmar() {
 // CÁLCULO DE AHORRO
 // ═══════════════════════════════════════════════
 function calcularCosteElec(tarifa, datos) {
-  // Lógica exacta de calculateTariffCost del original V19 para 2.0TD
+  // Lógica IDÉNTICA a calculateTariffCost del original V19 para 2.0TD
   const IVA = 0.21;
   const IE  = 0.05113;
+  const ANNUAL_DAYS = 365;
   const dias = datos.dias || 30;
 
-  // Potencia: p_potencia_1 y p_potencia_2 son €/kW/año
-  const subPower =
-    (datos.p1_kw || 0) * dias * ((tarifa.p_potencia_1 || 0) / 365) +
-    (datos.p2_kw || 0) * dias * ((tarifa.p_potencia_2 || 0) / 365);
+  // POTENCIA - igual que el original: precio es €/kW/AÑO, se prorratea por días
+  const p1kw = datos.p1_kw || 0;
+  const p2kw = datos.p2_kw || 0;
+  const pp1 = (tarifa.p_potencia_1 || 0);  // €/kW/año
+  const pp2 = (tarifa.p_potencia_2 || 0);  // €/kW/año
+  const subPower = p1kw * dias * (pp1 / ANNUAL_DAYS)
+                 + p2kw * dias * (pp2 / ANNUAL_DAYS);
 
-  // Energía: punta=p1_price, llano=p2_price, valle=p3_price
-  const subEnergyBruto =
-    (datos.e1 || 0) * (tarifa.p1_price || 0) +
-    (datos.e2 || 0) * (tarifa.p2_price || 0) +
-    (datos.e3 || 0) * (tarifa.p3_price || 0);
+  // ENERGÍA - punta=p1_price, llano=p2_price, valle=p3_price
+  const e1 = datos.e1 || 0;
+  const e2 = datos.e2 || 0;
+  const e3 = datos.e3 || 0;
+  const subEnergy = e1 * (tarifa.p1_price || 0)
+                  + e2 * (tarifa.p2_price || 0)
+                  + e3 * (tarifa.p3_price || 0);
 
-  // Descuento sobre energía (columna DESCUENTO)
+  // DESCUENTO sobre energía (columna DESCUENTO del CSV)
   const descuento = (tarifa.DESCUENTO || tarifa.descuento || 0) / 100;
-  const subEnergyNeto = subEnergyBruto * (1 - descuento);
+  const subEnergyNeto = subEnergy * (1 - descuento);
 
-  // Impuestos
+  // IMPUESTOS - igual que el original
   const subBase = subPower + subEnergyNeto;
   const costIE  = subBase * IE;
   const baseImp = subBase + costIE;
   const costIVA = baseImp * IVA;
-  return baseImp + costIVA;
+  const totalPeriodo = baseImp + costIVA;
+  console.log(`⚡ Elec [${tarifa.name||''}]: pot=${subPower.toFixed(2)} ener=${subEnergyNeto.toFixed(2)} total=${totalPeriodo.toFixed(2)} (factura=${datos.total})`);
+  return totalPeriodo;
 }
 
 function calcularGasTarifa(tarifa, datos) {
   // Lógica EXACTA de calculateGasTariff del original V19
-  const pEU = v => parseFloat(String(v||0).trim().replace(/\./g,'').replace(',','.')) || 0;
+  // parseCSVOriginal ya convirtió strings a números, así que usamos directamente
+  const toNum = v => typeof v === 'number' ? v : parseFloat(String(v||0).replace(',','.')) || 0;
   const dias = datos.dias || 30;
   const kwh  = datos.kwh  || 0;
   const totalCliente = datos.total || 0;
 
-  const p1_price          = pEU(tarifa.p1_price);
-  const descuento_energia = pEU(tarifa.Descuento_Energia) / 100;
-  const p_fijo_anual      = pEU(tarifa.p_fijo_1);
-  const descuento_fijo    = pEU(tarifa.Descuento_Potencia) / 100;
-  const comision          = pEU(tarifa.COMISION || tarifa.comision);
+  const p1_price          = toNum(tarifa.p1_price);
+  const descuento_energia = toNum(tarifa.Descuento_Energia) / 100;
+  const p_fijo_anual      = toNum(tarifa.p_fijo_1);
+  const descuento_fijo    = toNum(tarifa.Descuento_Potencia) / 100;
+  const comision          = toNum(tarifa.COMISION || tarifa.comision);
+
+  console.log(`🔥 Gas [${tarifa.name}]: p1=${p1_price} fijo=${p_fijo_anual} dE=${descuento_energia*100}% dias=${dias} kwh=${kwh} tc=${totalCliente}`);
 
   // 1. Término fijo
   const p_fijo_diario = p_fijo_anual / 365;
