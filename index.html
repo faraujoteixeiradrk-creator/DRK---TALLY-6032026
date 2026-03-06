@@ -1706,6 +1706,12 @@ async function enviarSolicitud() {
   // Recoger datos de ahorro para el email
   const mejorElec = resultadoElec?.[0];
   const mejorGas  = resultadoGas?.[0];
+  // Recalcular ahorro anual igual que mostrarResultadoElec (por si _ahorroAnual no coincide)
+  const diasE = datosElec?.dias || 30;
+  const diasG = datosGas?.dias || 30;
+  const ahorroElecReal = mejorElec ? (mejorElec._ahorroAnual || mejorElec._ahorro * (365/diasE)) : null;
+  const ahorroGasReal  = mejorGas  ? (mejorGas._ahorroAnual  || mejorGas._ahorro  * (365/diasG))  : null;
+  console.log('📧 Email ahorro elec:', ahorroElecReal, 'gas:', ahorroGasReal);
 
   const btn = document.querySelector('#screen-alta .btn-cta');
   if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
@@ -1719,7 +1725,7 @@ async function enviarSolicitud() {
       tel,
       cups_elec: datosElec?.cups || '',
       cups_gas:  datosGas?.cups  || '',
-      ahorro_elec:    mejorElec ? Math.round(mejorElec._ahorroAnual) : null,
+      ahorro_elec:    ahorroElecReal ? Math.round(ahorroElecReal) : null,
       tarifa_elec:    mejorElec ? (mejorElec.name + ' ' + (mejorElec.description||'')).trim() : null,
       e1_precio:      mejorElec ? fmt2(mejorElec.p1_price) : null,
       e2_precio:      mejorElec ? fmt2(mejorElec.p2_price) : null,
@@ -1729,7 +1735,7 @@ async function enviarSolicitud() {
       descuento_elec: mejorElec ? (mejorElec.DESCUENTO || 0) : null,
       coste_elec:     mejorElec ? mejorElec._coste.toFixed(2) : null,
       factura_elec:   datosElec?.total || null,
-      ahorro_gas:     mejorGas ? Math.round(mejorGas._ahorroAnual) : null,
+      ahorro_gas:     ahorroGasReal ? Math.round(ahorroGasReal) : null,
       tarifa_gas:     mejorGas ? (mejorGas.name + ' ' + (mejorGas.description||'')).trim() : null,
       gas_precio:     mejorGas ? fmt2(mejorGas.p1_price) : null,
       gas_fijo:       mejorGas ? fmt2(mejorGas.p_fijo_diario) : null,
