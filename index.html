@@ -1322,8 +1322,9 @@ function calcularAhorro() {
 
   // Gas
   if (datosGas && tipoSeleccionado !== 'electricidad') {
-    const tarifaDetectada = (datosGas.tarifa || '').trim().toUpperCase()
-      .replace(/RL(\d)/, 'RL.$1'); // RL1 → RL.1
+    // Normalizar: "RL.1", "RL1", "RL 1" → "RL.1"
+    const tarifaRaw = (datosGas.tarifa || '').trim().toUpperCase().replace(/\s/g,'');
+    const tarifaDetectada = tarifaRaw.includes('.') ? tarifaRaw : tarifaRaw.replace(/RL(\d)/, 'RL.$1');
     console.log('🔥 Tarifa gas buscada:', tarifaDetectada, '| total tarifas:', tarifasGas.length);
 
     const usadas = tarifasGas.filter(t => {
@@ -1337,7 +1338,7 @@ function calcularAhorro() {
       .filter(r => r._ahorroAnual > 0)
       .sort((a, b) => b._score - a._score);
 
-    console.log('🔥 Tarifas con ahorro positivo:', result.length);
+    console.log('🔥 Gas result[0]:', result[0] ? `ahorro=${result[0]._ahorroAnual.toFixed(2)}` : 'VACÍO');
     resultadoGas = result;
     mostrarResultadoGas(result);
   }
@@ -1414,6 +1415,7 @@ function mostrarResultadoElec(tarifas) {
 }
 
 function mostrarResultadoGas(tarifas) {
+  console.log('📊 mostrarResultadoGas llamado con', tarifas.length, 'tarifas');
   const sec = document.getElementById('resultado-gas-section');
   sec.style.display = 'block';
 
