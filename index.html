@@ -1206,17 +1206,29 @@ function calcularCosteElec(tarifa, datos) {
 }
 
 function calcularCosteGas(tarifa, datos) {
-  const IVA  = 0.21;
+  // Lógica EXACTA de calculateGasTariff del original V19
+  const parseEU = v => parseFloat(String(v||0).replace(/\./g,'').replace(',','.')) || 0;
   const dias = datos.dias || 30;
   const kwh  = datos.kwh  || 0;
-  // Descuento energía
-  const descE = (tarifa.Descuento_Energia || tarifa.descuento_energia || 0) / 100;
-  const precioKwh = (tarifa.p1_price || 0) * (1 - descE);
-  const costeEnergia = kwh * precioKwh;
-  // Fijo anual prorrateado
-  const fijo = (tarifa.p_fijo_1 || tarifa.p_fijo || 0);
-  const costeFijo = fijo * (dias / 365);
-  return (costeEnergia + costeFijo) * (1 + IVA);
+
+  const p1_price         = parseEU(tarifa.p1_price || 0);
+  const descuento_energia= parseEU(tarifa.Descuento_Energia || tarifa.descuento_energia || 0) / 100;
+  const p_fijo_anual     = parseEU(tarifa.p_fijo_1 || tarifa.p_fijo || 0);
+  const descuento_fijo   = parseEU(tarifa.Descuento_Potencia || tarifa.descuento_potencia || 0) / 100;
+
+  // 1. Término fijo (con descuento)
+  const p_fijo_diario = p_fijo_anual / 365;
+  const total_fijo = p_fijo_diario * (1 - descuento_fijo) * dias;
+
+  // 2. Energía
+  const total_energia = kwh * p1_price * (1 - descuento_energia);
+
+  // 3. Impuesto hidrocarburos (0.00234 €/kWh)
+  const imp_hidro = 0.00234 * kwh;
+
+  // 4. Subtotal + IVA 21%
+  const subtotal = total_fijo + total_energia + imp_hidro;
+  return subtotal * 1.21;
 }
 
 function calcularComisionElec(tarifa, datos) {
@@ -1262,11 +1274,13 @@ function calcularAhorro() {
 
   // Gas
   if (datosGas && tipoSeleccionado !== 'electricidad') {
-    const tarifaDetectada = (datosGas.tarifa || '').replace('.','').toUpperCase();
+    const tarifaDetectada = (datosGas.tarifa || '').replaceAll('.','').replaceAll(' ','').toUpperCase();
+    console.log('🔥 Tarifa gas detectada:', tarifaDetectada, '| tarifasGas total:', tarifasGas.length);
     const tarifasFiltradas = tarifasGas.filter(t => {
-      if (!tarifaDetectada) return true;
-      return t.tarifa.replace('.','').toUpperCase() === tarifaDetectada;
+      const tt = (t.Tarifa||t.tarifa||'').replaceAll('.','').replaceAll(' ','').toUpperCase();
+      return !tarifaDetectada || tt === tarifaDetectada;
     });
+    console.log('🔥 Tarifas gas filtradas:', tarifasFiltradas.length);
     const usadas = tarifasFiltradas.length > 0 ? tarifasFiltradas : tarifasGas;
 
     const result = usadas.map(t => {
@@ -1277,6 +1291,7 @@ function calcularAhorro() {
       return { ...t, _coste: coste, _ahorro: ahorroCliente, _comision: comision, _score: score };
     }).filter(t => t._ahorro > 0).sort((a, b) => b._score - a._score);
 
+    console.log('🔥 Tarifas gas con ahorro:', result.length);
     resultadoGas = result;
     mostrarResultadoGas(result);
   }
@@ -1344,6 +1359,9 @@ function mostrarResultadoElec(tarifas) {
         <div class="precio-item"><div class="precio-val">${fmt(t.p1_price,4)}</div><div class="precio-label">€/kWh Punta</div></div>
         <div class="precio-item"><div class="precio-val">${fmt(t.p2_price,4)}</div><div class="precio-label">€/kWh Llano</div></div>
         <div class="precio-item"><div class="precio-val">${fmt(t.p3_price,4)}</div><div class="precio-label">€/kWh Valle</div></div>
+        <div class="precio-item"><div class="precio-val">${fmt(t.p_potencia_1||0,3)}</div><div class="precio-label">€/kW/año P1</div></div>
+        <div class="precio-item"><div class="precio-val">${fmt(t.p_potencia_2||0,3)}</div><div class="precio-label">€/kW/año P2</div></div>
+        <div class="precio-item"><div class="precio-val">${(t.DESCUENTO||0) > 0 ? (t.DESCUENTO||0)+'%' : '—'}</div><div class="precio-label">Descuento</div></div>
       </div>
     `;
     lista.appendChild(div);
