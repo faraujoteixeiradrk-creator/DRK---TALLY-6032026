@@ -869,16 +869,35 @@ function setProgress(pct, titulo, sub) {
 // CARGA DE TARIFAS
 // ═══════════════════════════════════════════════
 function parseCSV(text) {
-  const lines = text.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  // Parser robusto para CSV de Google Sheets con comillas y comas decimales
+  function parseLine(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i+1] === '"') { current += '"'; i++; }
+        else inQuotes = !inQuotes;
+      } else if (ch === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  }
+
+  const lines = text.trim().split('\n').filter(l => l.trim());
+  const headers = parseLine(lines[0]);
   return lines.slice(1).map(line => {
-    const vals = line.match(/(".*?"|[^,]+|(?<=,)(?=,)|^(?=,)|(?<=,)$)/g) || line.split(',');
+    const vals = parseLine(line);
     const obj = {};
-    headers.forEach((h, i) => {
-      obj[h] = (vals[i] || '').trim().replace(/^"|"$/g, '');
-    });
+    headers.forEach((h, i) => { obj[h] = (vals[i] || '').trim(); });
     return obj;
-  }).filter(r => r.name || r.Name);
+  }).filter(r => (r.name || r.Name || '').trim() !== '');
 }
 
 async function cargarTarifas() {
@@ -886,7 +905,12 @@ async function cargarTarifas() {
     // Electricidad
     const rE = await fetch(SHEET_ELEC);
     const csvE = await rE.text();
+    console.log('📋 CSV Electricidad primeras 300 chars:', csvE.substring(0,300));
     const rawE = parseCSV(csvE);
+    console.log('📋 Headers electricidad:', Object.keys(rawE[0] || {}));
+    console.log('📋 Fila 1 electricidad:', rawE[0]);
+    console.log('📋 Total filas electricidad:', rawE.length);
+
     tarifasElec = rawE.filter(r => {
       const t = (r.Tarifa || r.tarifa || '').trim();
       return t === '2.0TD' || t === '2.0 TD';
@@ -903,12 +927,18 @@ async function cargarTarifas() {
       descuento_potencia: parseEU(r.Descuento_Potencia || r.descuento_potencia || 0),
       comision: parseEU(r.COMISION || r.comision || r.Comision || 0),
     }));
-    console.log(`✅ ${tarifasElec.length} tarifas electricidad 2.0TD cargadas`);
+    console.log(`✅ ${tarifasElec.length} tarifas electricidad 2.0TD`);
+    if (tarifasElec.length > 0) console.log('📋 Primera tarifa elec:', tarifasElec[0]);
 
     // Gas
     const rG = await fetch(SHEET_GAS);
     const csvG = await rG.text();
+    console.log('📋 CSV Gas primeras 300 chars:', csvG.substring(0,300));
     const rawG = parseCSV(csvG);
+    console.log('📋 Headers gas:', Object.keys(rawG[0] || {}));
+    console.log('📋 Fila 1 gas:', rawG[0]);
+    console.log('📋 Total filas gas:', rawG.length);
+
     tarifasGas = rawG.filter(r => {
       const t = (r.Tarifa || r.tarifa || '').trim().toUpperCase();
       return ['RL.1','RL.2','RL.3','RL1','RL2','RL3'].includes(t);
@@ -921,9 +951,11 @@ async function cargarTarifas() {
       descuento_energia: parseEU(r.Descuento_Energia || r.descuento_energia || 0),
       comision: parseEU(r.COMISION || r.comision || r.Comision || 0),
     }));
-    console.log(`✅ ${tarifasGas.length} tarifas gas RL1/2/3 cargadas`);
+    console.log(`✅ ${tarifasGas.length} tarifas gas RL1/2/3`);
+    if (tarifasGas.length > 0) console.log('📋 Primera tarifa gas:', tarifasGas[0]);
+
   } catch(e) {
-    console.error('Error cargando tarifas:', e);
+    console.error('❌ Error cargando tarifas:', e);
   }
 }
 
@@ -1177,20 +1209,23 @@ function calcularCosteElec(tarifa, datos) {
   const p1kw = datos.p1_kw || 0;
   const p2kw = datos.p2_kw || 0;
 
-  // Precios de energía con descuento
-  const pe1 = tarifa.p1_price * (1 - tarifa.descuento_energia/100);
-  const pe2 = tarifa.p2_price * (1 - tarifa.descuento_energia/100);
-  const pe3 = tarifa.p3_price * (1 - tarifa.descuento_energia/100);
-
-  // Coste energía
+  // Precios energía con descuento (€/kWh)
+  const de = tarifa.descuento_energia / 100;
+  const pe1 = tarifa.p1_price * (1 - de);
+  const pe2 = tarifa.p2_price * (1 - de);
+  const pe3 = tarifa.p3_price * (1 - de);
   const costeEnergia = e1*pe1 + e2*pe2 + e3*pe3;
 
-  // Coste potencia (€/kW/año × kW × días/365)
-  const pp1 = tarifa.p1_kw * (1 - tarifa.descuento_potencia/100);
-  const pp2 = tarifa.p2_kw * (1 - tarifa.descuento_potencia/100);
-  const costePotencia = (p1kw*pp1 + p2kw*pp2) * (dias/365);
+  // Precios potencia con descuento (€/kW/año → prorrateado por días)
+  const dp = tarifa.descuento_potencia / 100;
+  const pp1 = tarifa.p1_kw * (1 - dp) * p1kw * (dias/365);
+  const pp2 = tarifa.p2_kw * (1 - dp) * p2kw * (dias/365);
+  const costePotencia = pp1 + pp2;
 
-  const subtotal = (costeEnergia + costePotencia) * 1.21; // IVA 21%
+  // IVA electricidad 21%
+  const baseImponible = costeEnergia + costePotencia;
+  const impElec = baseImponible * 0.0511269632;
+  const subtotal = (baseImponible + impElec) * 1.21;
   return subtotal;
 }
 
@@ -1225,29 +1260,36 @@ function calcularComisionGas(tarifa, datos) {
 }
 
 function calcularAhorro() {
+  console.log('🧮 calcularAhorro - tarifasElec:', tarifasElec.length, 'tarifasGas:', tarifasGas.length);
+  console.log('📊 datosElec:', JSON.stringify(datosElec));
+  if (tarifasElec.length > 0) console.log('📊 1ª tarifa elec:', JSON.stringify(tarifasElec[0]));
+
   // Electricidad
   if (datosElec && tipoSeleccionado !== 'gas') {
     const tarifasFiltradasE = tarifasElec.map(t => {
       const coste = calcularCosteElec(t, datosElec);
       const ahorroCliente = datosElec.total - coste;
       const comision = calcularComisionElec(t, datosElec);
-      const score = ahorroCliente + comision; // ordenar por esto
+      const score = ahorroCliente + comision;
       return { ...t, _coste: coste, _ahorro: ahorroCliente, _comision: comision, _score: score };
-    }).filter(t => t._ahorro > 0)
-      .sort((a, b) => b._score - a._score); // mayor score = mejor para DRK+cliente
+    });
+    console.log('📊 Ejemplo cálculo 1ª tarifa:', tarifasFiltradasE[0] ? `coste=${tarifasFiltradasE[0]._coste.toFixed(2)} ahorro=${tarifasFiltradasE[0]._ahorro.toFixed(2)}` : 'sin tarifas');
 
-    resultadoElec = tarifasFiltradasE;
-    mostrarResultadoElec(tarifasFiltradasE);
+    const conAhorro = tarifasFiltradasE.filter(t => t._ahorro > 0).sort((a, b) => b._score - a._score);
+    console.log(`✅ ${conAhorro.length} tarifas con ahorro positivo de ${tarifasFiltradasE.length}`);
+
+    // Si no hay ahorro positivo, mostrar las mejores de todas formas (top 5 por menor coste)
+    const mostrar = conAhorro.length > 0 ? conAhorro : tarifasFiltradasE.sort((a,b) => b._score - a._score);
+    resultadoElec = mostrar;
+    mostrarResultadoElec(mostrar);
   }
 
   // Gas
   if (datosGas && tipoSeleccionado !== 'electricidad') {
-    // Filtrar por tarifa detectada o todas RL1/2/3
     const tarifaDetectada = (datosGas.tarifa || '').replace('.','').toUpperCase();
     const tarifasFiltradas = tarifasGas.filter(t => {
       if (!tarifaDetectada) return true;
-      const tt = t.tarifa.replace('.','').toUpperCase();
-      return tt === tarifaDetectada;
+      return t.tarifa.replace('.','').toUpperCase() === tarifaDetectada;
     });
     const usadas = tarifasFiltradas.length > 0 ? tarifasFiltradas : tarifasGas;
 
@@ -1257,8 +1299,7 @@ function calcularAhorro() {
       const comision = calcularComisionGas(t, datosGas);
       const score = ahorroCliente + comision;
       return { ...t, _coste: coste, _ahorro: ahorroCliente, _comision: comision, _score: score };
-    }).filter(t => t._ahorro > 0)
-      .sort((a, b) => b._score - a._score);
+    }).filter(t => t._ahorro > 0).sort((a, b) => b._score - a._score);
 
     resultadoGas = result;
     mostrarResultadoGas(result);
